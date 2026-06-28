@@ -54,6 +54,50 @@ jobs:
           XCODEBUILD_FLAGS: -showBuildTimingSummary
       - run: make test
 
+  # Manually-triggered helper: publish the prebuilt ThirdParty outputs (ghostty
+  # xcframework + zmx) so they can be developed against locally. The bundled zig
+  # 0.15.2 can't link the macOS 26.4+ SDK (ziglang/zig#31272), so these can't be
+  # built on a local machine whose newest Xcode is > 26.3. The setup-macos action
+  # pins Xcode <= 26.3 (whose SDK zig links) and the runner image ships the
+  # matching Metal toolchain — the one combination Apple won't let you assemble
+  # locally. Download the artifact and unpack into .build/ (see below); the build
+  # script's fingerprint then short-circuits `make build-ghostty-xcframework`, and
+  # `make build-app` runs under any local Xcode.
+  #
+  #   gh workflow run main.yml --ref <commit-or-branch>   # same commit you build locally
+  #   gh run watch
+  #   gh run download <run-id> -n ghostty-zmx-prebuilt -D .build
+  thirdparty-prebuilt:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-26
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      MISE_HTTP_TIMEOUT: 120
+      MISE_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-macos
+      - name: Upload prebuilt ghostty + zmx outputs
+        uses: actions/upload-artifact@v6
+        with:
+          name: ghostty-zmx-prebuilt
+          # Exclude the zig caches: they're large and machine-specific. The
+          # fingerprint + GhosttyKit.xcframework + share/ are what the build
+          # script checks to skip a rebuild.
+          path: |
+            .build/ghostty
+            .build/zmx
+            !.build/ghostty/.zig-cache
+            !.build/ghostty/.zig-global-cache
+            !.build/zmx/.zig-cache
+            !.build/zmx/.zig-global-cache
+          if-no-files-found: error
+          retention-days: 14
+
   check:
     runs-on: ubuntu-latest
     outputs:
